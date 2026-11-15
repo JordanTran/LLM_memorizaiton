@@ -16,10 +16,11 @@ from model.gpt import GPT
 class Trainer:
     def __init__(
         self, model, train, test, lr=1e-4, batch_size=2048, micro_batch_size=2048,
-        eval_size=10_000, seed=0,
+        eval_size=10_000, seed=0, autocast=True,
     ):
         """Set up Adam with the training and test sequences on the model's device."""
         self.model = model
+        self.autocast = autocast
         self.device = next(model.parameters()).device
         self.train = torch.as_tensor(train, device=self.device)
         self.test = torch.as_tensor(test, device=self.device)
@@ -44,7 +45,9 @@ class Trainer:
         self.optimizer.zero_grad(set_to_none=True)
         for chunk in idx.split(self.micro_batch_size):
             x = self.train[chunk]
-            loss = F.cross_entropy(self.model(x).float().transpose(1, 2), x)
+            with torch.autocast(self.device.type, torch.bfloat16, enabled=self.autocast):
+                logits = self.model(x)
+            loss = F.cross_entropy(logits.float().transpose(1, 2), x)
             (loss * len(chunk) / len(idx)).backward()
         self.optimizer.step()
         self.step += 1
@@ -104,8 +107,7 @@ def main(argv=None):
     else:
         data = FineWebData(args.n_train, n_test=args.n_test, seed=args.seed, path=args.pool)
         vocab_size, bos_id = FineWebData.vocab_size, 50256
-    model = GPT(args.n_layer, args.d_model, vocab_size, bos_id=bos_id)
-    model = model.to(device=device, dtype=torch.bfloat16)
+    model = GPT(args.n_layer, args.d_model, vocab_size, bos_id=bos_id).to(device)
 
     trainer = Trainer(
         model, data.train, data.test, lr=args.lr, batch_size=args.batch_size,

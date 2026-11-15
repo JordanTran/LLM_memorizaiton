@@ -19,6 +19,8 @@ class GPT(torch.nn.Module):
             embd_pdrop=0.0,
             attn_pdrop=0.0,
             use_cache=False,
+            bos_token_id=bos_id,
+            eos_token_id=bos_id,
         )
         self.gpt2 = GPT2LMHeadModel(config)
         self.bos_id = bos_id

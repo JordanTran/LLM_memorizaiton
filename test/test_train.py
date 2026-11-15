@@ -13,22 +13,36 @@ from train.train import Trainer, main
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def tiny_trainer(n=12, batch_size=4, micro_batch_size=4, lr=1e-3, dtype=torch.float32):
-    """Return a Trainer for a small model on n synthetic sequences."""
+def tiny_trainer(n=12, batch_size=4, micro_batch_size=4, lr=1e-3, autocast=False):
+    """Return a Trainer for a small fp32 model on n synthetic sequences."""
     torch.manual_seed(0)
     data = SyntheticData(n, n_test=8)
-    model = GPT(1, 32, 2048).to(dtype)
-    return Trainer(model, data.train, data.test, lr, batch_size, micro_batch_size)
+    model = GPT(1, 32, 2048)
+    return Trainer(
+        model, data.train, data.test, lr, batch_size, micro_batch_size, autocast=autocast
+    )
 
 
 def test_overfit_memorizes_nearly_everything():
-    """A bf16 model trained on 16 random sequences memorizes over 95% of their 11,264 bits."""
+    """A mixed-precision model trained on 16 random sequences memorizes over 95% of their bits."""
     torch.manual_seed(0)
     data = SyntheticData(16, n_test=16)
-    model = GPT(2, 128, 2048).to(DEVICE, torch.bfloat16)
+    model = GPT(2, 128, 2048).to(DEVICE)
     Trainer(model, data.train, data.test, lr=1e-3).fit(max_steps=400, eval_every=100, patience=100)
     memorized = total_memorization(model.bits(data.train), data.entropy_bits())
     assert memorized > 0.95 * data.entropy_bits()
+
+
+def test_mixed_precision_keeps_fp32_weights():
+    """Training computes in bf16 but every weight stays fp32 and moves on every step."""
+    trainer = tiny_trainer(autocast=True)
+    dtypes = []
+    trainer.model.register_forward_hook(lambda module, inputs, output: dtypes.append(output.dtype))
+    before = [p.detach().clone() for p in trainer.model.parameters()]
+    trainer.train_step(torch.arange(4))
+    assert dtypes == [torch.bfloat16]
+    assert all(p.dtype == torch.float32 for p in trainer.model.parameters())
+    assert all((p != b).all() for p, b in zip(trainer.model.parameters(), before, strict=True))
 
 
 def test_epoch_visits_every_sequence_once():
@@ -103,7 +117,7 @@ def test_main_synthetic(tmp_path):
     saved = json.loads((out / "results.json").read_text())
     assert saved["memorization"] == results["memorization"]
     assert saved["steps"] == 4 and saved["n_params"] == GPT(1, 32, 2048).n_params()
-    assert saved["dtype"] == "torch.bfloat16"
+    assert saved["dtype"] == "torch.float32"
     assert np.load(out / "train_bits.npy").shape == (32,)
     assert np.load(out / "test_bits.npy").shape == (16,)
 
