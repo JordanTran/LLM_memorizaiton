@@ -31,6 +31,7 @@ class Trainer:
         self.generator = torch.Generator(device=self.device).manual_seed(seed)
         self.step = 0
         self.history = []
+        self.converged = False
 
     def batches(self):
         """Yield batches of training indices, reshuffling every epoch."""
@@ -52,9 +53,10 @@ class Trainer:
         self.optimizer.step()
         self.step += 1
 
-    def fit(self, max_steps, eval_every=1000, patience=5, tol=1e-3):
-        """Train until train bits improve by less than tol (relative) for patience evals."""
+    def fit(self, max_steps, eval_every=500, patience=10, tol=0.1):
+        """Train until train bits per sequence improve by less than tol for patience evals."""
         best, stale, start = np.inf, 0, time.time()
+        best_state, best_bits = None, np.inf
         for idx in self.batches():
             self.train_step(idx)
             if self.step % eval_every == 0 or self.step == max_steps:
@@ -69,12 +71,17 @@ class Trainer:
                     }
                 )
                 print(f"step {self.step}: train {train_bits:.2f} bits, test {test_bits:.2f} bits")
-                if train_bits < best * (1 - tol):
+                if train_bits < best_bits:
+                    best_bits = train_bits
+                    best_state = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
+                if train_bits < best - tol:
                     best, stale = train_bits, 0
                 else:
                     stale += 1
-                if stale >= patience or self.step >= max_steps:
-                    return self.history
+                self.converged = stale >= patience
+                if self.converged or self.step >= max_steps:
+                    break
+        self.model.load_state_dict(best_state)
         return self.history
 
 
@@ -86,18 +93,20 @@ def main(argv=None):
     parser.add_argument("--n-layer", type=int, required=True)
     parser.add_argument("--d-model", type=int, required=True)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--micro-batch-size", type=int, default=2048)
     parser.add_argument("--max-steps", type=int, default=100_000)
-    parser.add_argument("--eval-every", type=int, default=1000)
-    parser.add_argument("--patience", type=int, default=5)
-    parser.add_argument("--tol", type=float, default=1e-3)
+    parser.add_argument("--eval-every", type=int, default=500)
+    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--tol", type=float, default=0.1)
     parser.add_argument("--n-test", type=int, default=10_000)
     parser.add_argument("--pool", default="data/fineweb.npy")
     parser.add_argument("--reference-bits", default="data/fineweb_reference_bits.npy")
     parser.add_argument("--out", default="results")
     args = parser.parse_args(argv)
+    if args.lr is None:
+        args.lr = 1e-3 if args.data == "synthetic" else 1e-4
 
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -122,6 +131,7 @@ def main(argv=None):
         "n_params": model.n_params(),
         "dtype": str(next(model.parameters()).dtype),
         "steps": trainer.step,
+        "converged": trainer.converged,
         "history": history,
         "train_bits_mean": float(train_bits.mean()),
         "test_bits_mean": float(test_bits.mean()),

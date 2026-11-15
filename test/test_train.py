@@ -91,19 +91,60 @@ def test_eval_uses_micro_batch_size(monkeypatch):
     assert sizes == [3, 3]
 
 
+def script_train_bits(monkeypatch, trainer, values):
+    """Make evaluation report the given train bits in order, snapshotting weights at each eval."""
+    values, snapshots = iter(values), []
+
+    def bits(x, batch_size=256):
+        """Return the next scripted value for train evals and zero for test evals."""
+        if x is trainer.train_eval:
+            snapshots.append([p.detach().clone() for p in trainer.model.parameters()])
+            return np.array([next(values)])
+        return np.zeros(1)
+
+    monkeypatch.setattr(trainer.model, "bits", bits)
+    return snapshots
+
+
+def test_restores_best_checkpoint(monkeypatch):
+    """After a loss spike, the model ends with the weights from its best evaluation."""
+    trainer = tiny_trainer()
+    snapshots = script_train_bits(monkeypatch, trainer, [5.0, 3.0, 9.0])
+    trainer.fit(max_steps=3, eval_every=1, patience=100)
+    for p, best in zip(trainer.model.parameters(), snapshots[1], strict=True):
+        assert torch.equal(p, best)
+
+
+def test_tol_is_absolute_bits(monkeypatch):
+    """Improvements smaller than tol bits per sequence count as no improvement."""
+    trainer = tiny_trainer()
+    script_train_bits(monkeypatch, trainer, [10.0, 9.95, 9.92, 9.91, 5.0])
+    trainer.fit(max_steps=100, eval_every=1, patience=3, tol=0.1)
+    assert trainer.step == 4 and trainer.converged
+
+
+def test_slow_steady_progress_keeps_training(monkeypatch):
+    """Many small improvements that add up to more than tol reset the patience counter."""
+    trainer = tiny_trainer()
+    script_train_bits(monkeypatch, trainer, [10.0, 9.95, 9.89, 9.84, 9.78, 9.8, 9.8, 9.8])
+    trainer.fit(max_steps=100, eval_every=1, patience=3, tol=0.1)
+    assert trainer.step == 8
+
+
 def test_stops_when_loss_plateaus():
     """With a zero learning rate, training stops after patience evals without improvement."""
     trainer = tiny_trainer(lr=0.0)
     history = trainer.fit(max_steps=10_000, eval_every=2, patience=3)
     assert trainer.step == 2 * (1 + 3)
     assert len(history) == 4
+    assert trainer.converged
 
 
 def test_stops_at_max_steps():
     """Training never runs past max_steps, and the last step is evaluated."""
     trainer = tiny_trainer()
     history = trainer.fit(max_steps=7, eval_every=5, patience=100)
-    assert trainer.step == 7
+    assert trainer.step == 7 and not trainer.converged
     assert [h["step"] for h in history] == [5, 7]
     assert set(history[0]) == {"step", "train_bits", "test_bits", "seconds"}
 
@@ -118,6 +159,7 @@ def test_main_synthetic(tmp_path):
     assert saved["memorization"] == results["memorization"]
     assert saved["steps"] == 4 and saved["n_params"] == GPT(1, 32, 2048).n_params()
     assert saved["dtype"] == "torch.float32"
+    assert saved["config"]["lr"] == 1e-3 and saved["converged"] is False
     assert np.load(out / "train_bits.npy").shape == (32,)
     assert np.load(out / "test_bits.npy").shape == (16,)
 
