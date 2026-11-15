@@ -65,6 +65,18 @@ def test_gradient_accumulation_matches_full_batch():
         assert torch.allclose(a, b, atol=1e-6)
 
 
+def test_eval_uses_micro_batch_size(monkeypatch):
+    """Evaluation scores in micro-batches, so it never needs more memory than training."""
+    trainer = tiny_trainer(n=12, batch_size=12, micro_batch_size=3)
+    sizes = []
+    real_bits = trainer.model.bits
+    monkeypatch.setattr(
+        trainer.model, "bits", lambda x, batch_size=256: sizes.append(batch_size) or real_bits(x)
+    )
+    trainer.fit(max_steps=1, eval_every=1)
+    assert sizes == [3, 3]
+
+
 def test_stops_when_loss_plateaus():
     """With a zero learning rate, training stops after patience evals without improvement."""
     trainer = tiny_trainer(lr=0.0)

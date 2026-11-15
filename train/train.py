@@ -55,8 +55,8 @@ class Trainer:
         for idx in self.batches():
             self.train_step(idx)
             if self.step % eval_every == 0 or self.step == max_steps:
-                train_bits = self.model.bits(self.train_eval).mean()
-                test_bits = self.model.bits(self.test).mean()
+                train_bits = self.model.bits(self.train_eval, self.micro_batch_size).mean()
+                test_bits = self.model.bits(self.test, self.micro_batch_size).mean()
                 self.history.append(
                     {
                         "step": self.step,
@@ -112,7 +112,8 @@ def main(argv=None):
         micro_batch_size=args.micro_batch_size, seed=args.seed,
     )
     history = trainer.fit(args.max_steps, args.eval_every, args.patience, args.tol)
-    train_bits, test_bits = model.bits(data.train), model.bits(data.test)
+    train_bits = model.bits(data.train, trainer.micro_batch_size)
+    test_bits = model.bits(data.test, trainer.micro_batch_size)
 
     results = {
         "config": vars(args),
