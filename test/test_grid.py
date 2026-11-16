@@ -28,10 +28,10 @@ def test_fineweb_grid():
     assert len(grid.jobs()) == 8
 
 
-def test_width_256_uses_micro_batches():
-    """The widest synthetic model splits each batch so its activations fit in 16 GB."""
+def test_wide_models_use_micro_batches():
+    """Widths 128 and 256 split each batch so their activations stay far below 16 GB."""
     micro = {d: mb for _, d, mb, _ in GRIDS["synthetic"].models}
-    assert micro[256] <= 512
+    assert micro[128] <= 512 and micro[256] <= 512
 
 
 def test_command_passes_micro_batch_size(tmp_path):
