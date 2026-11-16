@@ -85,6 +85,11 @@ class Trainer:
         return self.history
 
 
+def run_name(data, n_layer, d_model, n_train, seed):
+    """Return the results folder name for one run."""
+    return f"{data}_L{n_layer}_d{d_model}_n{n_train}_s{seed}"
+
+
 def main(argv=None):
     """Train one model on one dataset and save its results."""
     parser = argparse.ArgumentParser()
@@ -135,6 +140,7 @@ def main(argv=None):
         "history": history,
         "train_bits_mean": float(train_bits.mean()),
         "test_bits_mean": float(test_bits.mean()),
+        "peak_memory_gb": torch.cuda.max_memory_allocated() / 1e9 if device == "cuda" else None,
     }
     if args.data == "synthetic":
         results["memorization"] = float(total_memorization(train_bits, data.entropy_bits()))
@@ -142,8 +148,7 @@ def main(argv=None):
         reference_bits = np.load(args.reference_bits)[data.train_idx]
         results["memorization"] = float(unintended_memorization(train_bits, reference_bits))
 
-    name = f"{args.data}_L{args.n_layer}_d{args.d_model}_n{args.n_train}_s{args.seed}"
-    out = Path(args.out) / name
+    out = Path(args.out) / run_name(args.data, args.n_layer, args.d_model, args.n_train, args.seed)
     out.mkdir(parents=True, exist_ok=True)
     (out / "results.json").write_text(json.dumps(results, indent=2))
     np.save(out / "train_bits.npy", train_bits)
