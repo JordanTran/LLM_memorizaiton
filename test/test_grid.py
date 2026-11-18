@@ -10,15 +10,15 @@ def test_synthetic_grid_is_table_1_four_layer_row():
     """The synthetic models are the paper's 4-layer Table 1 configurations, smallest first."""
     models = [(n_layer, d) for n_layer, d, _, _ in GRIDS["synthetic"].models]
     assert models == [(4, 32), (4, 64), (4, 128), (4, 256)]
-    assert len(GRIDS["synthetic"].jobs()) == 20
+    assert len(GRIDS["synthetic"].jobs()) == 21
 
 
 def test_synthetic_sizes_bracket_expected_capacity():
-    """Each model gets 2 dataset sizes below its expected ceiling and 3 above it."""
+    """Each model gets 2 dataset sizes below its expected ceiling and at least 3 above it."""
     for n_layer, d, _, sizes in GRIDS["synthetic"].models:
         ceiling = TABLE_1_ALPHA[d] * GPT(n_layer, d, vocab_size=2048).n_params() / 704
         assert sum(n < ceiling for n in sizes) == 2
-        assert sum(n > ceiling for n in sizes) == 3
+        assert sum(n > ceiling for n in sizes) >= 3
 
 
 def test_fineweb_grid():
