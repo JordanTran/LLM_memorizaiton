@@ -120,7 +120,7 @@ class MembershipInference:
         ax.set_ylim(0.4, 1.02)
         style(ax, f"Membership inference gets harder as data grows ({self.data})",
               "Training set size (sequences)", "Attack F1 (held-out threshold)")
-        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="upper right")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="lower left")
         fig.tight_layout()
         fig.savefig(path, dpi=200, facecolor=SURFACE)
         plt.close(fig)
