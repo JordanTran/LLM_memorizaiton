@@ -9,11 +9,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Grid:
-    def __init__(self, data, models, args=()):
-        """A set of runs: every (n_layer, d_model, micro_batch_size) model on each dataset size."""
+    def __init__(self, data, models, args=(), batch_size=2048, epochs=None):
+        """A set of runs: every (n_layer, d_model, micro_batch_size) model on each dataset size.
+
+        With epochs set, each run trains for that many passes over its own data.
+        """
         self.data = data
         self.models = models
         self.args = list(args)
+        self.batch_size = batch_size
+        self.epochs = epochs
+
+    def max_steps(self, n_train):
+        """Return the step budget for one run, or None to use the shared args."""
+        if self.epochs is None:
+            return None
+        return round(self.epochs * n_train / self.batch_size)
 
     def jobs(self):
         """Return (n_layer, d_model, micro_batch_size, n_train) for every run, in order."""
@@ -33,6 +44,9 @@ class Grid:
                 "--micro-batch-size", str(micro_batch_size), "--seed", str(seed),
                 "--out", str(out), *self.args,
             ]
+            if self.max_steps(n_train) is not None:
+                command += ["--batch-size", str(self.batch_size),
+                            "--max-steps", str(self.max_steps(n_train))]
             commands.append(command)
             print(" ".join(command[1:]), flush=True)
             if not dry_run and subprocess.run(command, cwd=ROOT).returncode != 0:
@@ -54,10 +68,12 @@ GRIDS = {
     "fineweb": Grid(
         "fineweb",
         [
-            (8, 64, 64, [2**14, 2**15, 2**16, 2**17]),
-            (8, 128, 64, [2**14, 2**15, 2**16, 2**17]),
+            (8, 64, 128, [2**12, 2**13, 2**14, 2**15, 2**16, 2**17]),
+            (8, 128, 128, [2**12, 2**13, 2**14, 2**15, 2**16]),
         ],
-        ["--max-steps", "20000", "--patience", "6"],
+        ["--lr", "1e-3"],
+        batch_size=256,
+        epochs=468.75,
     ),
 }
 
