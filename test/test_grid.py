@@ -22,10 +22,29 @@ def test_synthetic_sizes_bracket_expected_capacity():
 
 
 def test_fineweb_grid():
-    """The text grid is two 8-layer models on 2^14 to 2^17 sequences, with micro-batching."""
+    """The text grid is width 64 on 2^12-2^17 and width 128 on 2^12-2^16 at batch 256, lr 1e-3."""
     grid = GRIDS["fineweb"]
-    assert [(n_layer, d, mb) for n_layer, d, mb, _ in grid.models] == [(8, 64, 64), (8, 128, 64)]
-    assert len(grid.jobs()) == 8
+    assert [(n_layer, d, mb) for n_layer, d, mb, _ in grid.models] == [(8, 64, 128), (8, 128, 128)]
+    sizes = [n for _, _, _, n in grid.jobs()]
+    assert sizes == [2**k for k in range(12, 18)] + [2**k for k in range(12, 17)]
+    assert grid.batch_size == 256
+    assert grid.args[grid.args.index("--lr") + 1] == "1e-3"
+
+
+def test_fineweb_runs_get_equal_passes(tmp_path):
+    """Every text run trains for the same number of passes over its data (7.5k steps at 4K)."""
+    commands = GRIDS["fineweb"].run(tmp_path, dry_run=True)
+    steps = {int(c[c.index("--n-train") + 1]): int(c[c.index("--max-steps") + 1]) for c in commands}
+    assert steps == {4096: 7500, 8192: 15000, 16384: 30000, 32768: 60000,
+                     65536: 120000, 131072: 240000}
+    assert all(c[c.index("--batch-size") + 1] == "256" for c in commands)
+
+
+def test_synthetic_runs_keep_shared_step_cap(tmp_path):
+    """Without epochs, runs use the grid's shared --max-steps and no per-run budget."""
+    commands = GRIDS["synthetic"].run(tmp_path, dry_run=True)
+    assert all(c.count("--max-steps") == 1 for c in commands)
+    assert all(c[c.index("--max-steps") + 1] == "20000" for c in commands)
 
 
 def test_wide_models_use_micro_batches():
