@@ -1,9 +1,10 @@
 import json
 
+import matplotlib.axes
 import numpy as np
 import pytest
 
-from eval.capacity import TABLE_1, Capacity, main, width_color
+from eval.capacity import TABLE_1, Capacity, main, nats_per_token, width_color
 
 PARAMS = {32: 118_464, 64: 335_232, 128: 1_063_680, 256: 3_700_224}
 
@@ -18,6 +19,8 @@ def write_run(root, d, n, memorization, converged=True, data="synthetic"):
         "n_params": PARAMS[d],
         "converged": converged,
         "memorization": memorization,
+        "train_bits_mean": 704 - memorization / n,
+        "test_bits_mean": 800.0,
         "history": history,
     }
     (folder / "results.json").write_text(json.dumps(run))
@@ -118,7 +121,7 @@ def test_empty_results_fail_loudly(tmp_path):
 
 
 def test_main_writes_figures_and_summary(tmp_path):
-    """The script saves Figs. 1, 10 and 11 plus a summary with the paper comparison."""
+    """The script saves Figs. 1, 3, 10, 11 and 14 plus a summary with the paper comparison."""
     fake_grid(tmp_path / "results", lambda d: 3.5)
     main(["--results", str(tmp_path / "results"), "--out", str(tmp_path / "figures")])
     names = {p.name for p in (tmp_path / "figures").iterdir()}
@@ -126,6 +129,8 @@ def test_main_writes_figures_and_summary(tmp_path):
         "fig1_memorization_vs_data.png",
         "fig10_memorization_vs_steps.png",
         "fig11_capacity_vs_params.png",
+        "fig14_synthetic_losses.png",
+        "fig3_synthetic_test_loss_vs_capacity.png",
         "capacity_summary.md",
     }
     summary = (tmp_path / "figures" / "capacity_summary.md").read_bytes().decode("utf-8")
@@ -140,6 +145,61 @@ def test_main_works_with_one_model(tmp_path):
     main(["--results", str(tmp_path / "results"), "--out", str(tmp_path / "figures")])
     summary = (tmp_path / "figures" / "capacity_summary.md").read_bytes().decode("utf-8")
     assert "n/a (needs 2+ models)" in summary
+
+
+def spy_on_lines(monkeypatch):
+    """Record the x and y of every non-empty line drawn with Axes.plot."""
+    plotted = []
+    real_plot = matplotlib.axes.Axes.plot
+
+    def spy(ax, x, y, *args, **kwargs):
+        x, y = np.atleast_1d(x), np.atleast_1d(y)
+        if len(x):
+            plotted.append((list(x), list(y)))
+        return real_plot(ax, x, y, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "plot", spy)
+    return plotted
+
+
+def test_double_descent_ratio_uses_fitted_alpha(tmp_path, monkeypatch):
+    """Fig. 3 puts a run's test loss at dataset bits ÷ (fitted bits/param × params)."""
+    fake_grid(tmp_path, lambda d: {32: 3.0, 64: 3.2, 128: 3.4, 256: 3.6}[d])
+    capacity = Capacity(tmp_path)
+    alpha = capacity.alphas()["fit"]
+    assert alpha != pytest.approx(3.0)
+    plotted = spy_on_lines(monkeypatch)
+    capacity.plot_test_loss_vs_capacity(tmp_path / "fig3.png")
+    x, y = plotted[0]
+    sizes = [1024 * 32, 2048 * 32, 4096 * 32]
+    assert x == pytest.approx([n * 704 / (alpha * PARAMS[32]) for n in sizes])
+    assert y == [800.0, 800.0, 800.0]
+    assert len(plotted) == 4
+    assert (tmp_path / "fig3.png").exists()
+
+
+def test_losses_are_nats_per_token(tmp_path, monkeypatch):
+    """Fig. 14 plots train then test loss per token in nats, as the paper does."""
+    fake_grid(tmp_path, lambda d: 3.0)
+    plotted = spy_on_lines(monkeypatch)
+    Capacity(tmp_path).plot_losses(tmp_path / "fig14.png")
+    (train_x, train_y), (test_x, test_y) = plotted[0], plotted[1]
+    sizes = [1024 * 32, 2048 * 32, 4096 * 32]
+    assert train_x == test_x == sizes
+    cap = 3.0 * PARAMS[32]
+    expected = [(704 - cap * f / n) * np.log(2) / 64 for n, f in zip(sizes, [0.5, 1.0, 0.97])]
+    assert train_y == pytest.approx(expected)
+    assert test_y == pytest.approx([800 * np.log(2) / 64] * 3)
+    assert nats_per_token(704) == pytest.approx(np.log(2048))
+
+
+def test_capacity_plot_has_params_on_y(tmp_path, monkeypatch):
+    """Fig. 11 puts total memorization on x and model size on y, as the paper does."""
+    fake_grid(tmp_path, lambda d: 3.0)
+    plotted = spy_on_lines(monkeypatch)
+    Capacity(tmp_path).plot_capacity_vs_params(tmp_path / "fig11.png")
+    points = [(x[0], y[0]) for x, y in plotted if len(x) == 1]
+    assert points[0] == pytest.approx((3.0 * PARAMS[32], PARAMS[32]))
 
 
 def test_model_colors_are_fixed():
