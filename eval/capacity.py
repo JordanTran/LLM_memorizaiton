@@ -20,6 +20,11 @@ WIDTH_COLORS = {32: "#86b6ef", 64: "#3987e5", 128: "#1c5cab", 256: "#0d366b"}
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e1", "#fcfcfb"
 
 
+def nats_per_token(bits_per_sequence, seq_len=64):
+    """Convert bits per sequence to the per-token loss in nats that the paper plots."""
+    return bits_per_sequence * np.log(2) / seq_len
+
+
 def ramp(n):
     """Return n light-to-dark steps of the validated blue ramp."""
     return [RAMP[round(i * (len(RAMP) - 1) / max(n - 1, 1))] for i in range(n)]
@@ -122,7 +127,7 @@ class Capacity:
         sizes = sorted({r["config"]["n_train"] for r in self.runs})
         xs = np.array([sizes[0] / 1.5, sizes[-1] * 1.5])
         ax.plot(xs, xs * BITS_PER_SEQUENCE, color=MUTED, linestyle="--", linewidth=1.2,
-                label="dataset size in bits (everything memorized)")
+                label="dataset size in bits")
         for n_layer, d, params in self.models():
             color = width_color(d)
             runs = self.curve(n_layer, d)
@@ -138,10 +143,10 @@ class Capacity:
                             markeredgecolor=color, markeredgewidth=2)
             ax.annotate(f"d={d}", (n[-1], mem[-1]), xytext=(6, 0), textcoords="offset points",
                         va="center", color=INK, fontsize=9)
-        ax.set_xscale("log", base=2)
+        ax.set_xscale("log")
         ax.set_yscale("log")
-        style(ax, "Memorization levels off at each model's capacity",
-              "Training set size (sequences)", "Memorization (bits)")
+        style(ax, "Unintended memorization of uniform random data",
+              "Training set size (number of datapoints)", "Unintended memorization (bits)")
         ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="upper left")
         fig.text(0.01, 0.01, "Hollow markers: run hit the step cap before converging.",
                  color=MUTED, fontsize=8)
@@ -150,26 +155,75 @@ class Capacity:
         plt.close(fig)
 
     def plot_capacity_vs_params(self, path):
-        """Fig. 11: capacity against parameter count, with the fitted bits per parameter."""
+        """Fig. 11: model size against capacity, with the fitted bits per parameter."""
         fig, ax = plt.subplots(figsize=(6, 4.5), facecolor=SURFACE)
         alphas = self.alphas()
-        params = np.array([p for _, _, p in self.models()], dtype=float)
-        xs = np.geomspace(params.min() / 1.5, params.max() * 1.5, 50)
-        ax.plot(xs, alphas["fit"] * xs, color=MUTED, linewidth=1.2, linestyle="--",
+        caps = np.array([self.capacity(n_layer, d) for n_layer, d, _ in self.models()])
+        xs = np.geomspace(caps.min() / 1.5, caps.max() * 1.5, 50)
+        ax.plot(xs, xs / alphas["fit"], color=MUTED, linewidth=1.2, linestyle="--",
                 label=f"fit: {alphas['fit']:.2f} bits/param")
-        ax.plot(xs, 3.64 * xs, color=MUTED, linewidth=1, linestyle=":",
+        ax.plot(xs, xs / 3.64, color=MUTED, linewidth=1, linestyle=":",
                 label="paper Fig. 11: 3.64 bits/param")
-        for n_layer, d, p in self.models():
-            color = width_color(d)
-            cap = self.capacity(n_layer, d)
-            ax.plot(p, cap, "o", markersize=8, color=color, markeredgecolor=SURFACE,
+        for (n_layer, d, p), cap in zip(self.models(), caps, strict=True):
+            ax.plot(cap, p, "o", markersize=8, color=width_color(d), markeredgecolor=SURFACE,
                     markeredgewidth=1.5, label=f"{n_layer}L d={d}")
-            ax.annotate(f"{cap / p:.2f}", (p, cap), xytext=(8, -4), textcoords="offset points",
+            ax.annotate(f"{cap / p:.2f}", (cap, p), xytext=(8, -4), textcoords="offset points",
                         color=INK, fontsize=9)
         ax.set_xscale("log")
         ax.set_yscale("log")
-        style(ax, "Capacity grows linearly with parameters", "Parameters", "Capacity (bits)")
+        style(ax, "Capacity in bits per parameter", "Total memorization (bits)",
+              "Model size (parameters)")
         ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="upper left")
+        fig.tight_layout()
+        fig.savefig(path, dpi=200, facecolor=SURFACE)
+        plt.close(fig)
+
+    def plot_test_loss_vs_capacity(self, path):
+        """Fig. 3: test bits per sequence against dataset bits ÷ capacity, one line per model."""
+        fig, ax = plt.subplots(figsize=(7, 4.5), facecolor=SURFACE)
+        alpha = self.alphas()["fit"]
+        for n_layer, d, params in self.models():
+            runs = self.curve(n_layer, d)
+            ratio = [r["config"]["n_train"] * BITS_PER_SEQUENCE / (alpha * params) for r in runs]
+            ax.plot(ratio, [r["test_bits_mean"] for r in runs], "-o", color=width_color(d),
+                    linewidth=2, markersize=6, markeredgecolor=SURFACE, markeredgewidth=1.5)
+            ax.plot([], [], "-", color=width_color(d), linewidth=4,
+                    label=f"{n_layer}L d={d} ({params / 1e6:.2f}M)")
+        ax.axvline(1.0, color=INK, linestyle="--", linewidth=1.5,
+                   label="model capacity = dataset size")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        style(ax, "Double descent on synthetic data",
+              f"Dataset-to-capacity ratio ({alpha:.2f} bits/param)",
+              "Test loss (bits per sequence)")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="upper right")
+        fig.tight_layout()
+        fig.savefig(path, dpi=200, facecolor=SURFACE)
+        plt.close(fig)
+
+    def plot_losses(self, path):
+        """Fig. 14: train (solid) and test (dashed) loss per token against dataset size."""
+        fig, ax = plt.subplots(figsize=(7, 4.5), facecolor=SURFACE)
+        for n_layer, d, params in self.models():
+            color = width_color(d)
+            runs = self.curve(n_layer, d)
+            n = [r["config"]["n_train"] for r in runs]
+            ax.plot(n, [nats_per_token(r["train_bits_mean"]) for r in runs], "-o", color=color,
+                    linewidth=2, markersize=6, markeredgecolor=SURFACE, markeredgewidth=1.5)
+            ax.plot([], [], "-", color=color, linewidth=4,
+                    label=f"{n_layer}L d={d} ({params / 1e6:.2f}M)")
+            ax.plot(n, [nats_per_token(r["test_bits_mean"]) for r in runs], "--o", color=color,
+                    linewidth=2, markersize=6, markerfacecolor=SURFACE, markeredgecolor=color,
+                    markeredgewidth=2)
+        ax.plot([], [], "-", color=MUTED, linewidth=2, label="train")
+        ax.plot([], [], "--", color=MUTED, linewidth=2, label="test")
+        ax.axhline(nats_per_token(BITS_PER_SEQUENCE), color=MUTED, linestyle=":", linewidth=1.2,
+                   label="uniform guess (ln 2048)")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        style(ax, "Train and test loss on synthetic data",
+              "Training set size (number of datapoints)", "Loss (nats per token)")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="lower right", handlelength=3.5)
         fig.tight_layout()
         fig.savefig(path, dpi=200, facecolor=SURFACE)
         plt.close(fig)
@@ -180,14 +234,18 @@ class Capacity:
         runs = self.curve(n_layer, d_model)
         for r, color in zip(runs, ramp(len(runs)), strict=True):
             n = r["config"]["n_train"]
-            steps = [h["step"] for h in r["history"]]
-            mem = [n * (BITS_PER_SEQUENCE - h["train_bits"]) / 1e6 for h in r["history"]]
-            ax.plot(steps, mem, color=color, linewidth=2, label=f"{n:,} sequences")
-        ax.axhline(self.capacity(n_layer, d_model) / 1e6, color=MUTED, linestyle="--", linewidth=1.2,
-                   label="capacity (best over sizes)")
-        style(ax, f"Memorization during training ({n_layer}L d={d_model})",
-              "Training step", "Memorization (million bits)")
-        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="lower right")
+            points = [(h["step"], n * (BITS_PER_SEQUENCE - h["train_bits"])) for h in r["history"]]
+            points = [(step, mem) for step, mem in points if mem > 0]
+            ax.plot(*zip(*points, strict=True), color=color, linewidth=2, label=f"{n:,}")
+        cap = self.capacity(n_layer, d_model)
+        ax.axhline(cap, color=MUTED, linestyle="--", linewidth=1.2,
+                   label=f"estimated capacity ({cap:.3g} bits)")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        style(ax, f"Bits memorized across training ({n_layer}L d={d_model})",
+              "Training progress (steps)", "Total memorization (bits)")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="lower right",
+                  title="Train set size", title_fontsize=8)
         fig.tight_layout()
         fig.savefig(path, dpi=200, facecolor=SURFACE)
         plt.close(fig)
@@ -204,6 +262,8 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     capacity.plot_memorization_vs_data(out / "fig1_memorization_vs_data.png")
     capacity.plot_capacity_vs_params(out / "fig11_capacity_vs_params.png")
+    capacity.plot_test_loss_vs_capacity(out / "fig3_synthetic_test_loss_vs_capacity.png")
+    capacity.plot_losses(out / "fig14_synthetic_losses.png")
     largest = capacity.models()[-1]
     capacity.plot_memorization_vs_steps(out / "fig10_memorization_vs_steps.png", *largest[:2])
     alphas = capacity.alphas()

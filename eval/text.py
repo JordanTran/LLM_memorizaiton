@@ -6,8 +6,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 
-from eval.capacity import INK, MUTED, SURFACE, style, width_color  # noqa: E402
+from eval.capacity import INK, MUTED, SURFACE, nats_per_token, style, width_color  # noqa: E402
 
 REFERENCE_BITS_PER_SEQUENCE = 64 * 4.274
 
@@ -60,48 +61,67 @@ class TextResults:
             )
         return "\n".join(lines)
 
-    def _lines(self, ax, x_key, y_key, linestyle="-", label_suffix="", hollow=False):
-        """Draw one line per model of y_key against x_key."""
+    def _lines(self, ax, x_key, y_key, linestyle="-", hollow=False, label=True, scale=1.0):
+        """Draw one line per model of y_key (times scale) against x_key."""
         for n_layer, d, params in self.models():
             rows = self.curve(n_layer, d)
-            x = [r[x_key] for r in rows]
-            y = [r[y_key] for r in rows]
             color = width_color(d)
-            ax.plot(x, y, "o", linestyle=linestyle, color=color, linewidth=2, markersize=6,
+            ax.plot([r[x_key] for r in rows], [r[y_key] * scale for r in rows], "o",
+                    linestyle=linestyle, color=color, linewidth=2, markersize=6,
                     markerfacecolor=SURFACE if hollow else color,
-                    markeredgecolor=color if hollow else SURFACE, markeredgewidth=1.5,
-                    label=f"{n_layer}L d={d} ({params / 1e6:.2f}M){label_suffix}")
+                    markeredgecolor=color if hollow else SURFACE, markeredgewidth=1.5)
+            if label:
+                ax.plot([], [], "-", color=color, linewidth=4,
+                        label=f"{n_layer}L d={d} ({params / 1e6:.2f}M)")
 
     def plot_memorization(self, path):
-        """Fig. 2: unintended memorization against dataset size, one line per model."""
+        """Fig. 2: unintended memorization against dataset size, with the dataset's total bits."""
         fig, ax = plt.subplots(figsize=(7, 4.5), facecolor=SURFACE)
+        sizes = sorted({r["n_train"] for r in self.rows})
+        xs = np.array([sizes[0] / 1.5, sizes[-1] * 1.5])
+        ax.plot(xs, xs * REFERENCE_BITS_PER_SEQUENCE, color=MUTED, linestyle="--", linewidth=1.2,
+                label="total bits (dataset size)")
         self._lines(ax, "n_train", "memorization")
-        ax.set_xscale("log", base=2)
-        ax.set_yscale("symlog", linthresh=1e4)
-        ax.set_ylim(0, 2 * max(r["memorization"] for r in self.rows))
-        style(ax, "Unintended memorization on FineWeb", "Training set size (sequences)",
-              "Memorization beyond the 774M reference (bits)")
-        ax.legend(frameon=False, fontsize=8, labelcolor=INK)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        style(ax, "Unintended memorization of text", "Training set size (number of datapoints)",
+              "Unintended memorization (bits)")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="lower left")
         fig.tight_layout()
         fig.savefig(path, dpi=200, facecolor=SURFACE)
         plt.close(fig)
 
-    def plot_losses(self, path, x_key="n_train"):
-        """Figs. 3 and 4: train (dashed) and test (solid) bits per sequence against data size."""
+    def plot_losses(self, path):
+        """Fig. 4: train (solid) and test (dashed) loss per token against dataset size."""
         fig, ax = plt.subplots(figsize=(7, 4.5), facecolor=SURFACE)
-        self._lines(ax, x_key, "test_bits", "-", " test")
-        self._lines(ax, x_key, "train_bits", "--", " train", hollow=True)
-        ax.axhline(REFERENCE_BITS_PER_SEQUENCE, color=MUTED, linestyle=":", linewidth=1.2,
-                   label="774M reference")
-        if x_key == "capacity_ratio":
-            ax.axvline(1.0, color=MUTED, linewidth=1, label="dataset = capacity")
-            ax.set_xscale("log")
-            xlabel = "Dataset bits ÷ model capacity"
-        else:
-            ax.set_xscale("log", base=2)
-            xlabel = "Training set size (sequences)"
-        style(ax, "Train and test loss on FineWeb", xlabel, "Bits per sequence")
-        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="center right", handlelength=3.5)
+        scale = nats_per_token(1.0)
+        self._lines(ax, "n_train", "train_bits", "-", scale=scale)
+        self._lines(ax, "n_train", "test_bits", "--", hollow=True, label=False, scale=scale)
+        ax.plot([], [], "-", color=MUTED, linewidth=2, label="train")
+        ax.plot([], [], "--", color=MUTED, linewidth=2, label="test")
+        ax.axhline(nats_per_token(REFERENCE_BITS_PER_SEQUENCE), color=MUTED, linestyle=":",
+                   linewidth=1.2, label="774M reference")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        style(ax, "Train and test loss on text", "Training set size (number of datapoints)",
+              "Loss (nats per token)")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="lower right", handlelength=3.5)
+        fig.tight_layout()
+        fig.savefig(path, dpi=200, facecolor=SURFACE)
+        plt.close(fig)
+
+    def plot_test_loss_vs_capacity(self, path):
+        """Appendix: the paper's Fig. 3 axes applied to text, test bits per sequence."""
+        fig, ax = plt.subplots(figsize=(7, 4.5), facecolor=SURFACE)
+        self._lines(ax, "capacity_ratio", "test_bits")
+        ax.axvline(1.0, color=INK, linestyle="--", linewidth=1.5,
+                   label="model capacity = dataset size")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        style(ax, "Double descent on text",
+              f"Dataset-to-capacity ratio (274 bits/seq, {self.alpha:.2f} bits/param)",
+              "Test loss (bits per sequence)")
+        ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="upper right")
         fig.tight_layout()
         fig.savefig(path, dpi=200, facecolor=SURFACE)
         plt.close(fig)
@@ -119,7 +139,7 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     text.plot_memorization(out / "fig2_text_memorization.png")
     text.plot_losses(out / "fig4_text_losses.png")
-    text.plot_losses(out / "fig3_text_losses_vs_capacity.png", "capacity_ratio")
+    text.plot_test_loss_vs_capacity(out / "appendix_text_test_loss_vs_capacity.png")
     table = text.table()
     (out / "text_summary.md").write_text(table + "\n", encoding="utf-8")
     print(table)

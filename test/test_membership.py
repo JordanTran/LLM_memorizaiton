@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from eval.membership import MembershipInference, attack, auc, best_threshold, f1, main
+from eval.text import REFERENCE_BITS_PER_SEQUENCE
 
 
 def test_best_threshold_separates_clean_groups():
@@ -83,6 +84,26 @@ def test_loads_one_dataset_type_sorted(tmp_path):
     assert [(r["d_model"], r["n_train"]) for r in rows] == [(32, 256), (32, 1024), (64, 512)]
 
 
+def test_capacity_ratio_uses_each_data_types_bits(tmp_path):
+    """Dataset bits are 704 per sequence on synthetic data and the reference's on text."""
+    rng = np.random.default_rng(0)
+    for data in ("synthetic", "fineweb"):
+        write_run(tmp_path, data, 64, 1024, rng.normal(size=1024), rng.normal(size=500))
+        mia = MembershipInference(tmp_path, data)
+        mia.plot_vs_capacity(tmp_path / f"{data}.png", alpha=2.0)
+        bits = 704 if data == "synthetic" else REFERENCE_BITS_PER_SEQUENCE
+        assert mia.rows[0]["capacity_ratio"] == pytest.approx(1024 * bits / (2.0 * 64_000))
+
+
+def test_main_skips_histogram_without_matching_run(tmp_path):
+    """Fig. 8 is drawn only when a d=128 run on 2^14 sequences exists."""
+    rng = np.random.default_rng(0)
+    write_run(tmp_path / "results", "synthetic", 64, 512, rng.normal(size=512), rng.normal(size=500))
+    main(["--data", "synthetic", "--results", str(tmp_path / "results"),
+          "--out", str(tmp_path / "figures")])
+    assert not (tmp_path / "figures" / "fig8_loss_histogram_synthetic.png").exists()
+
+
 def test_no_results_fail_loudly(tmp_path):
     """Asking for a data type with no finished runs gives a clear error."""
     with pytest.raises(ValueError, match="no fineweb results"):
@@ -90,13 +111,19 @@ def test_no_results_fail_loudly(tmp_path):
 
 
 def test_main_writes_figure_and_table(tmp_path):
-    """The script saves the F1 plot and a UTF-8 table for the requested data type."""
+    """The script saves the F1 plots, the Fig. 8 histogram for d=128 at 2^14, and a table."""
     rng = np.random.default_rng(0)
-    for n in (256, 1024):
-        write_run(tmp_path / "results", "fineweb", 64, n, rng.normal(size=n) - 1,
+    for d, n in [(64, 256), (64, 1024), (128, 2**14)]:
+        write_run(tmp_path / "results", "fineweb", d, n, rng.normal(size=n) - 1,
                   rng.normal(size=500))
     main(["--data", "fineweb", "--results", str(tmp_path / "results"),
           "--out", str(tmp_path / "figures")])
-    assert (tmp_path / "figures" / "membership_fineweb.png").exists()
+    names = {p.name for p in (tmp_path / "figures").iterdir()}
+    assert names == {
+        "membership_fineweb.png",
+        "appendix_membership_vs_capacity_fineweb.png",
+        "fig8_loss_histogram_fineweb.png",
+        "membership_fineweb.md",
+    }
     table = (tmp_path / "figures" / "membership_fineweb.md").read_bytes().decode("utf-8")
     assert "| 4 | 64 | 1,024 |" in table
