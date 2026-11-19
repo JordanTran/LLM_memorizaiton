@@ -22,11 +22,11 @@ def test_synthetic_sizes_bracket_expected_capacity():
 
 
 def test_fineweb_grid():
-    """The text grid is width 64 on 2^12-2^17 and width 128 on 2^12-2^16 at batch 256, lr 1e-3."""
+    """The text grid is widths 64 and 128 on 2^12-2^17 at batch 256, lr 1e-3."""
     grid = GRIDS["fineweb"]
     assert [(n_layer, d, mb) for n_layer, d, mb, _ in grid.models] == [(8, 64, 128), (8, 128, 128)]
     sizes = [n for _, _, _, n in grid.jobs()]
-    assert sizes == [2**k for k in range(12, 18)] + [2**k for k in range(12, 17)]
+    assert sizes == [2**k for k in range(12, 18)] * 2
     assert grid.batch_size == 256
     assert grid.args[grid.args.index("--lr") + 1] == "1e-3"
 
