@@ -52,14 +52,14 @@ def test_no_results_fail_loudly(tmp_path):
 
 
 def test_main_writes_figures_and_table(tmp_path):
-    """The script saves Figs. 2, 3 and 4 and a UTF-8 table."""
+    """The script saves Figs. 2 and 4, the appendix text Fig. 3 and a UTF-8 table."""
     for n, mem, train, test in [(1024, 1e6, 200.0, 1800.0), (2048, 2e5, 330.0, 880.0)]:
         write_run(tmp_path / "results", 64, n, mem, train, [600.0, test])
     main(["--results", str(tmp_path / "results"), "--out", str(tmp_path / "figures")])
     names = {p.name for p in (tmp_path / "figures").iterdir()}
     assert names == {
         "fig2_text_memorization.png",
-        "fig3_text_losses_vs_capacity.png",
+        "appendix_text_test_loss_vs_capacity.png",
         "fig4_text_losses.png",
         "text_summary.md",
     }
