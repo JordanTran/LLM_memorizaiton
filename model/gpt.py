@@ -30,6 +30,12 @@ class GPT(torch.nn.Module):
         bos = torch.full_like(x[:, :1], self.bos_id)
         return self.gpt2(input_ids=torch.cat([bos, x[:, :-1]], dim=1)).logits
 
+    def next_logits(self, x):
+        """Return logits for the token after x, computing the vocabulary only at that position."""
+        bos = torch.full_like(x[:, :1], self.bos_id)
+        h = self.gpt2.transformer(input_ids=torch.cat([bos, x], dim=1)).last_hidden_state
+        return self.gpt2.lm_head(h[:, -1])
+
     def n_params(self):
         """Return the parameter count, counting the tied embedding once."""
         return sum(p.numel() for p in self.parameters())

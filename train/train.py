@@ -109,6 +109,7 @@ def main(argv=None):
     parser.add_argument("--pool", default="data/fineweb.npy")
     parser.add_argument("--reference-bits", default="data/fineweb_reference_bits.npy")
     parser.add_argument("--out", default="results")
+    parser.add_argument("--save-model", action="store_true")
     args = parser.parse_args(argv)
     if args.lr is None:
         args.lr = 1e-3 if args.data == "synthetic" else 1e-4
@@ -153,6 +154,8 @@ def main(argv=None):
     (out / "results.json").write_text(json.dumps(results, indent=2))
     np.save(out / "train_bits.npy", train_bits)
     np.save(out / "test_bits.npy", test_bits)
+    if args.save_model:
+        torch.save(model.state_dict(), out / "model.pt")
     print(f"saved {out}: {results.get('memorization', float('nan')):.0f} bits memorized")
     return results
 
