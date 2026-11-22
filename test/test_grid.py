@@ -59,6 +59,13 @@ def test_command_passes_micro_batch_size(tmp_path):
     assert command[command.index("--micro-batch-size") + 1] == "128"
 
 
+def test_save_model_is_passed_to_every_run(tmp_path):
+    """With save_model, each run is launched with --save-model; without it, none are."""
+    grid = Grid("synthetic", [(1, 32, 2048, [16, 32])])
+    assert all("--save-model" in c for c in grid.run(tmp_path, dry_run=True, save_model=True))
+    assert not any("--save-model" in c for c in grid.run(tmp_path, dry_run=True))
+
+
 def test_dry_run_skips_finished_runs(tmp_path):
     """Runs that already have results.json are not run again."""
     grid = Grid("synthetic", [(1, 32, 2048, [16, 32])])

@@ -50,12 +50,18 @@ def load_run(run_dir, pool="data/fineweb.npy", device="cpu"):
 
 
 class Extraction:
-    def __init__(self, results_dir, pool="data/fineweb.npy", n=10_000, seed=0):
-        """Measure train and test extraction rates for every run that saved its model."""
+    def __init__(self, results_dir, pool="data/fineweb.npy", n=10_000, seed=0, d_model=None):
+        """Measure train and test extraction rates for every run that saved its model.
+
+        With d_model set, only runs of that width are measured.
+        """
         device = "cuda" if torch.cuda.is_available() else "cpu"
         rng = np.random.default_rng(seed)
         self.rows = []
         for model_path in sorted(Path(results_dir).glob("*/model.pt")):
+            config = json.loads((model_path.parent / "results.json").read_text())["config"]
+            if d_model is not None and config["d_model"] != d_model:
+                continue
             model, data, c = load_run(model_path.parent, pool, device)
             train = data.train[rng.permutation(len(data.train))[:n]]
             test = data.test[:n]
@@ -114,8 +120,9 @@ def main(argv=None):
     parser.add_argument("--pool", default="data/fineweb.npy")
     parser.add_argument("--out", default="figures/extraction")
     parser.add_argument("--n", type=int, default=10_000)
+    parser.add_argument("--d-model", type=int, default=None)
     args = parser.parse_args(argv)
-    extraction = Extraction(args.results, args.pool, args.n)
+    extraction = Extraction(args.results, args.pool, args.n, d_model=args.d_model)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     extraction.plot(out / "fig6_extraction_rates.png")

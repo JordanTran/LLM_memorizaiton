@@ -77,6 +77,17 @@ def test_main_writes_figure_table_and_json(tmp_path):
     assert all(0 <= r["train_rate"] <= 1 and r["n_train_checked"] == 8 for r in rows)
 
 
+def test_d_model_keeps_only_runs_of_that_width(tmp_path):
+    """With d_model set, saved runs of other widths are skipped."""
+    for d in (32, 64):
+        args = f"--data synthetic --n-train 16 --n-test 8 --n-layer 1 --d-model {d}"
+        args += f" --max-steps 2 --eval-every 2 --out {tmp_path} --save-model"
+        train_main(args.split())
+    rows = Extraction(tmp_path, n=8, d_model=32).rows
+    assert len(rows) == 3 and all(r["d_model"] == 32 for r in rows)
+    assert {r["d_model"] for r in Extraction(tmp_path, n=8).rows} == {32, 64}
+
+
 def test_runs_without_saved_models_fail_loudly(tmp_path):
     """Pointing the script at runs without model.pt is an error, not an empty figure."""
     (tmp_path / "run").mkdir()

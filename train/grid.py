@@ -30,7 +30,7 @@ class Grid:
         """Return (n_layer, d_model, micro_batch_size, n_train) for every run, in order."""
         return [(n_layer, d, mb, n) for n_layer, d, mb, sizes in self.models for n in sizes]
 
-    def run(self, out="results", seed=0, dry_run=False):
+    def run(self, out="results", seed=0, dry_run=False, save_model=False):
         """Train every run without saved results, one process each; return the commands run."""
         commands = []
         for n_layer, d_model, micro_batch_size, n_train in self.jobs():
@@ -47,6 +47,8 @@ class Grid:
             if self.max_steps(n_train) is not None:
                 command += ["--batch-size", str(self.batch_size),
                             "--max-steps", str(self.max_steps(n_train))]
+            if save_model:
+                command.append("--save-model")
             commands.append(command)
             print(" ".join(command[1:]), flush=True)
             if not dry_run and subprocess.run(command, cwd=ROOT).returncode != 0:
@@ -84,5 +86,6 @@ if __name__ == "__main__":
     parser.add_argument("--out", default="results")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--save-model", action="store_true")
     args = parser.parse_args()
-    GRIDS[args.grid].run(args.out, args.seed, args.dry_run)
+    GRIDS[args.grid].run(args.out, args.seed, args.dry_run, args.save_model)
